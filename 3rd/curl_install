@@ -1,0 +1,15 @@
+1.下载curl
+
+ 1 git clone https://github.com/curl/curl.git 
+
+2.在curl目录下生成configure文件
+
+ 1 cd curl 2 ./buldconf 
+
+3.编译生成curl
+
+ 1 ./configure 2 make 3 sudo make install 
+
+4.在src下生成了curl
+
+ 1 /curl -V 
