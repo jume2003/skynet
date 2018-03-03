@@ -7,6 +7,7 @@ local fd_list = {}
 local db
 --
 function CMD.add(info)
+  info.uid = tostring(info.uid)
   player_list[tostring(info.uid)] = info
   fd_list[tostring(info.fd)] = info.uid
 end

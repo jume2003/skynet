@@ -11,6 +11,7 @@ local login_msg = MsgList.login
 local comman_msg = MsgList.comman
 local CMD = {}
 local db
+local dog
 local msg_login = {mode="login",cmd="login",user="1",password="1"}
 local msg_register = {mode="login",cmd="register",user="123",loginpass="123456",nick_name="333",sex=1,touxian = 1}
 
@@ -100,7 +101,9 @@ function CMD.login(msg)
        print("logined")
     elseif ret and #ret>0 then
        local user = pm.get(ret[1].uid)
-       if user and user.fd > 0 then 
+       if user and user.fd > 0 then
+         --重登把旧的那个人逼下线
+          skynet.call(dog, "lua", "close",user.fd) 
           error_code = 4
        elseif ret[1].loginpass == msg.password then
        	  error_code = 1
@@ -121,13 +124,14 @@ function CMD.login(msg)
     elseif error_code == 3 then
       ret_msg =  "用户不存在"
     elseif error_code == 4 then
-      ret_msg =  "用户已登录"
-    else
-      ret_msg =  "未知错误"
+      ret_msg =  "用户重登"
+    elseif error_code == 5 then
+      ret_msg =  "断线重登"
     end
     login_msg.login.info.code = ret_msg
     comman_msg.showbox.info.msg = ret_msg
     mysocket.write(msg.fd, login_msg.login)
+    
     if error_code ~= 1 then
       mysocket.write(msg.fd, comman_msg.showbox)
     end
@@ -170,6 +174,7 @@ end
 
 skynet.start(function()
 	db = datacenter.get("db")
+  dog = datacenter.get("dog")
   pm.init(datacenter.get("pm"))
   tm.init(datacenter.get("tm"))
 	skynet.dispatch("lua", function(session, source, cmd, subcmd, ...)

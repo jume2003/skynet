@@ -46,6 +46,10 @@ function get_groupfds(group)
 	end
 	return fd_list
 end
+--更新到共享数据中
+function update_group()
+	datacenter.set("group_list",group_list)
+end
 --没1分种清理一次pm 当user.fd 为负数时且不在 不在任何group中只就可以把user删了
 --随便保存一下数据
 function cls_pm()
@@ -64,6 +68,19 @@ function speed_test(uid)
     msg = {fd = -uid,rule={wanfa=1,difen=1,jushu=8,fanfei=1,ip=0}}
 
   	CMD.create_group(msg)
+end
+--添加机器人 
+local g_robid = 100000
+function add_robit(group,count)
+   for i=1,count,1 do
+	    local rouid = (g_robid)
+	    g_robid = g_robid+1
+	    --添加机器人 
+	    pm.add({uid = rouid,nick_name = "123",touxian = "http://thirdwx.qlogo.cn/mmopen/vi_32/3EB7dFdNRKmjHmkRpGvjqZh2ia0Oj69tticicvb3T2lsFDricb4Sc7YPHhPlJvolJ8uv5GaibSk65q1g4IDz5R5hS1w/132"},rouid)
+	    --机器人加入
+	    CMD.join_group({fd = rouid,uid = rouid,gid=group.gid})
+	    skynet.send(group.ser, "lua", "ready",{fd = rouid})
+	end
 end
 
 function CMD.disconnect(fd)
@@ -110,7 +127,7 @@ function CMD.agdel(msg)
 	    	local is_del = true
 	    	group_list[gid].agdel[uid] = msg.info.agree
 	    	for k, v in pairs(group.uids) do
-	    		if group_list[gid].agdel[v] == false and v >0 then
+	    		if group_list[gid].agdel[v] == false then
 	    			is_del = false
 	    		end
 	    	end
@@ -145,7 +162,7 @@ function CMD.exit_group(msg)
 				--102 游戏结束局数已到
 	    		local game_state = skynet.call(group.ser, "lua", "game_state",msg)
 	    		--当玩家需要退出房间时要从游戏逻辑中判断是否能退出
-	    		if game_state == 102 or ((user_count<=1 or group.fzuid ~= user.uid) and game_state == 100 ) then
+	    		if game_state == 102 then
 		    		for k, v in pairs(group.uids) do
 		    		   if v == user.uid then
 		    		   group.uids[k] = nil
@@ -173,31 +190,33 @@ function CMD.join_group(msg)
    				ret_join.info.game_id = group.game_id
    				mysocket.write(msg.fd, ret_join)
    				--重启游戏
-   				skynet.send(group.ser, "lua", "resgame",msg)
-	    		print("已在组中")
+   				skynet.call(group.ser, "lua", "resgame",msg)
+   				comman_msg.showbox.info.msg = "自动跳转到原来房间，要退出请先解散。"
+   				mysocket.write(msg.fd, comman_msg.showbox)
+	    		--print("已在组中")
 	    	else 
 	    	   group =group_list[msg.gid]
 	    	   if group and skynet.table_size(group.uids)< group.maxuser then
                 	group.uids[tostring(user.uid)] = user.uid
+                	update_group()
                 	ret_join.info.gid = group.gid
    					ret_join.info.game_id = group.game_id
    					mysocket.write(msg.fd, ret_join)
-   					skynet.send(group.ser, "lua", "join",msg)
-                	print("房间 join ok "..user.uid)
+   					skynet.call(group.ser, "lua", "join",msg)
+                	--print("房间 join ok "..user.uid)
                elseif group == nil then
                		ret_msg.info.msg = "房间不存在"
    					mysocket.write(msg.fd, ret_msg)
-               		print("房间不存在")
+               		--print("房间不存在")
                else
                		ret_msg.info.msg = "房间已满人"
    					mysocket.write(msg.fd, ret_msg)
-               		print("房间已满人")
+               		--print("房间已满人")
 	    	   end
 	    	end
 	    end
 end
 --
-local g_robid = 100000
 function CMD.create_group(msg)
 	    local fd = msg.fd
 	    local ser = nil
@@ -213,6 +232,8 @@ function CMD.create_group(msg)
    				mysocket.write(msg.fd, ret_join)
    				--重启游戏
    				skynet.send(group.ser, "lua", "resgame",msg)
+   				comman_msg.showbox.info.msg = "自动跳转到原来房间，要退出请先解散。"
+   				mysocket.write(msg.fd, comman_msg.showbox)
         	 	print("已在组中")
             else
 				--不在任何组中 创建组
@@ -224,23 +245,18 @@ function CMD.create_group(msg)
 	        		pm.set(user)
 	        		local ser = skynet.newservice("kddmj")
 		        	group = {uids = {},fzuid = 0,agdel={},ser = ser,game_id = 1,maxuser = 5,rule={}}
-		        	group.uids[tostring(user.uid)] = user.uid
 		        	group.fzuid = user.uid
 		        	group.rule = msg.rule
 		        	group.gid = math.random(100000,888888)+user.uid
 		        	group_list[group.gid] = group
+		        	update_group()
 		        	skynet.call(ser, "lua", "start",group.gid)
-		        	skynet.send(group.ser, "lua", "join",msg)
+		        	add_robit(group,2)
+		        	--加入到此房间中
+		        	CMD.join_group({fd = msg.fd,uid = user.uid,gid=group.gid})
+		        	--添加机器人
 		        	
-			        for i=2,4,1 do
-			        local rouid = -(g_robid)
-			        g_robid = g_robid+1
-			        --添加机器人 
-			        pm.add({uid = rouid,nick_name = "123",touxian = "123"},rouid)
-			        --机器人加入
-			        CMD.join_group({fd = rouid,uid = rouid,gid=group.gid})
-			        skynet.send(group.ser, "lua", "ready",{fd = rouid})
-			        end
+			        
 			        print("创建房间 "..group.gid)
 			        ret_create.info.gid = group.gid
 	   				ret_create.info.game_id = group.game_id
@@ -281,14 +297,14 @@ skynet.start(function()
 
     skynet.fork(function()
 		while true do
-			datacenter.set("group_list",group_list)
-			skynet.sleep(10)
+			update_group()
+			skynet.sleep(1)
 		end
 	end)
 	skynet.fork(function()
 		while true do
 			cls_pm()
-			skynet.sleep(1000)
+			skynet.sleep(1000*60)
 		end
 	end)
 	skynet.dispatch("lua", function(session, source, cmd, subcmd, ...)

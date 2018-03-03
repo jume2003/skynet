@@ -77,7 +77,7 @@ end
 function CMD.heartbet(msg)
     local ret_heartbet = {cmd = "heartbet",mode= "any",info={sevtime = os.time()}}
      mysocket.write(msg.fd, ret_heartbet)
-     heartbet_list[msg.fd] = os.time()
+     heartbet_list[tostring(msg.fd)] = os.time()
      --print("heartbet")
 end
 --当心跳包超过3秒没收到就是掉线了（向dog发断开）

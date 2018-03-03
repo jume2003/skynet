@@ -1,12 +1,11 @@
 local skynet = require "skynet"
 local datacenter = require "skynet.datacenter"
 local utils = require "myfunlib.base_tips.utils"
-local mjmrg = {hand = {},disk = {},men={eat={},pen={},gan={}},is_tip=false,uid=0,fd=0,gl_ser = nil}
+local mjmrg = {hand = {},disk = {},men={eat={},pen={},gan={}},is_tip=false,fd=0,gl_ser = nil}
 --正常牌
 function mjmrg:isnormalcard(card)
 	local ret = card>=1 and card <=34
 		if ret == false then
-			print("not normalcard! uid:"..self.uid)
 			print("not normalcard! card:"..card)
 			utils.print(self.hand)
 		end
@@ -16,7 +15,7 @@ end
 function mjmrg:isnormalpile(cards)
 	for i=1,#cards,1 do
 		if cards[i] <0 or cards[i]>4 then
-			print("not normalpile! uid:"..self.uid)
+			print("not normalpile!")
 			utils.print(cards)
 			return false
 		end
@@ -117,11 +116,10 @@ function mjmrg:getcount(card,cards)
 	return count
 end
 --初始化卡牌
-function mjmrg:init(cards,uid)
+function mjmrg:init(cards)
 	self.hand = {}--手牌
 	self.disk = {}--桌面
 	self.men={eat={},pen={},gan={}}--门前
-	self.uid = uid--UID
 	self.hand = cards
 	self.gl_ser = datacenter.get("gl")
 end

@@ -15,13 +15,13 @@ local group = {}
 local CMD = {}
 local db
 --加入游戏
-local ret_rule = {mode="kddmj",cmd="rule",info ={rule}}
---加入游戏
 local ret_join = {mode="kddmj",cmd="join",info ={uid = 0,name="",touxian="",sit=0,groupid=0}}
 --准备游戏
-local ret_ready = {mode="kddmj",cmd="ready",info ={uid = 0}}
---房间信息
-local ret_houseinfo = {mode="kddmj",cmd = "houseinfo",info ={sit={},groupid=0,user={}}}
+local ret_ready = {mode="kddmj",cmd="ready",info ={uid = 0,sit = {}}}
+--麻将信息
+local ret_mjinfo = {mode="kddmj",cmd = "mjinfo",info ={mjinfo={}}}
+--坐位信息
+local ret_sitinfo = {mode="kddmj",cmd = "sitinfo",info ={user={}}}
 --抓位(骰子)
 local ret_touzi = {mode="kddmj",cmd="touzi",info ={touzi1 = 0,touzi2=0}}
 --赖子
@@ -48,10 +48,14 @@ local ret_tip = {mode="kddmj",cmd="tip",info ={uid = 0,card = 0,index = 0}}
 local ret_hu = {mode="kddmj",cmd="hu",info ={uid = 0,beuid = 0,card = 0}}
 --操作盒子
 local ret_crtbox = {mode="kddmj",cmd = "crtbox",info ={}}
+--已接收crt请求
+local ret_crtreced = {mode="kddmj",cmd = "crtreced",info ={}}
 --取消
 local ret_pass = {mode="kddmj",cmd="pass",info ={}}
 --游戏倒计时
-local ret_djshi= {mode="kddmj",cmd="djshi",info ={uids={},djshi_time=0}}
+local ret_djshi = {mode="kddmj",cmd="djshi",info ={uids={},djshi_time=0}}
+--剩余牌数
+local ret_cardcount = {mode="kddmj",cmd="cardcount",info ={count}}
 --结算
 local ret_jx = {mode="kddmj",cmd = "jx",info ={hutype=0,zfan="",
 huid = 0,behuid=0,hucard=0,
@@ -64,34 +68,41 @@ user={
 	}}}
 
 
-local game = {gtime = 0,state = 100,jushu = 0,max_djshi=10,gui=5,banlk_uid = 0,crt_uid = 1,sit = {0,0,0,0},card_pile = {}}
+local game = {gtime = 0,state = 100,gid=0,jushu = 0,max_djshi=10,gui=5,banlk_uid = 0,crt_uid = 1,sit = {0,0,0,0},card_pile = {}}
 --4个玩家
-local player = {{},{},{},{}}
+local player_list = {{},{},{},{}}
 --玩家对当前出牌操作信息
 local sev_crt = {} -- 服务器信息
 local cle_crt = {} -- 客户返回信息
 
 function CMD.start(gid)
 	--updata users
-	group_list= datacenter.get("group_list")
-	group = group_list[gid]
+	game.gid = gid
     skynet.fork(function()
 		while true do
-			group_list= datacenter.get("group_list")
-			group = group_list[gid]
-            if group then
-			   game:update()
-	        end
+			game:fdupdate()
+            game:update()
 			skynet.sleep(10)
 		end
 	end)
     ----游戏倒计时
 	skynet.fork(function()
 		while true do
-			game:sub()
-			skynet.sleep(100)
+			if game.state<100 then
+				game:sub()
+			end
+			skynet.sleep(50)
 		end
 	end)
+end
+
+--得到坐位
+function game:getsit(uid)
+	local sit = 0
+	if player_list[uid] then
+		sit = player_list[uid].sit
+	end
+	return sit
 end
 --得到空闲坐位
 function game:getfreesit(uid)
@@ -102,14 +113,23 @@ function game:getfreesit(uid)
 	end
 	return 0
 end
---得到玩家坐位序号
-function game:getsit(uid)
+--根据坐位得到玩家
+function game:getplayerbysit(sit)
 	for i=1,4,1 do
-		if tonumber(self.sit[i]) == tonumber(uid) then
-			return i
+		if i == sit then
+			local uid = self.sit[i]
+			return player_list[uid]
 		end
 	end
-	return 0
+	return nil
+end
+--根据坐位得到玩家
+function game:getplayers()
+	local players = {}
+	for i=1,4,1 do
+		players[i] = self:getplayerbysit(i)
+	end
+	return players
 end
 --初始化牌堆
 function game:pile_init()
@@ -147,43 +167,52 @@ function game:pile_init()
 	--游戏规则
 	self.gui = is_gui and math.random(28,34) or 0
 end
---玩家坐下
-function game:player_sit(uid,sit,fd)
+--创建玩家(坐下)
+function game:player_create(user,sit)
+	local uid = user.uid
 	self.sit[sit] = uid--初始化坐位
 	cle_crt[uid] = {uid = uid}
 	sev_crt[uid] = {uid = uid}
-	player[uid] = {}
-	player[uid] = mjmrg:clone(mjmrgclone)
-	player[uid].fd = fd
-	player[uid].score = 0
-	player[uid].is_tip = false
-	player[uid].is_ready = false
+	player_list[uid] = {}
+	player_list[uid] = mjmrg:clone(mjmrgclone)
+	player_list[uid].fd = user.fd
+	player_list[uid].name = user.nick_name
+	player_list[uid].touxian = user.touxian
+	player_list[uid].score = 0
+	player_list[uid].is_tip = false
+	player_list[uid].is_ready = false
+	player_list[uid].sit = sit
+	player_list[uid].uid = uid
+			  		
 	print(uid.." sit "..sit)
 end
 --初始化玩家
-function game:player_init(uid,fd)	
+function game:player_init(palyer)	
 	local cards = {}
+	local uid = palyer.uid
+	--初始化操作回馈
+	cle_crt[uid] = {uid = uid}
+	sev_crt[uid] = {uid = uid}
+	--初始化玩家手牌
 	for i=1,13,1 do
 		local card = self.card_pile[#self.card_pile]
 		table.remove(self.card_pile,#self.card_pile)
 		cards[i] = card
 	end
-	--初始化操作回馈
-	cle_crt[uid] = {uid = uid}
-	sev_crt[uid] = {uid = uid}
-	--cards = {1,1,1,1,2,2,2,2,3,3,3,3,self.gui}
-	player[uid]:init(cards,uid)
-	player[uid].is_tip = false
-	player[uid].is_ready = false
+	cards = {1,1,1,1,2,2,2,2,3,3,3,3,self.gui}
+	palyer:init(cards,uid)
+	
+	palyer.is_tip = false
+	palyer.is_ready = false
 end
 --初始化
 function game:init()
 	--初始化牌堆
 	self:pile_init()
 	--初始化每一个玩家
+	local players = self:getplayers()
 	for i=1,4,1 do
-		local user = pm.get(self.sit[i])
-		self:player_init(self.sit[i],user.fd)
+		self:player_init(players[i])
 	end
 	--结算初始化
 	self:init_jx()
@@ -197,39 +226,69 @@ function game:init()
 	self.gtime = self.max_djshi
 	print("主坐庄 "..self.crt_uid)
 end
---更新房间信息
-function game:update_houseinfo(uid)
-	--坐位
-	ret_houseinfo.info.sit = self.sit
-	--房间号
-	ret_houseinfo.info.groupid = group.gid
-	--局数
-	ret_houseinfo.info.jushu = self.jushu
-	--赖子
-	ret_houseinfo.info.gui = self.gui
-	--庄家
-	ret_houseinfo.info.banlk_uid = self.banlk_uid
+--更新坐位信息
+function game:update_sitinfo(uid)
+	--每个人的头像，分数，名字，uid,游戏规则,当前局数,剩余牌数
+	ret_sitinfo.info.user ={}
+	ret_sitinfo.info.rule = group.rule
+	ret_sitinfo.info.jushu = self.jushu
+	ret_sitinfo.info.myuid = uid
+	ret_sitinfo.info.cardcount = #self.card_pile
+	ret_sitinfo.info.gui = self.gui
+	ret_sitinfo.info.groupid = self.gid
+	ret_sitinfo.info.state = self.state
+	ret_sitinfo.info.banlk_uid = self.banlk_uid
+
+	local players = self:getplayers()
 	for i=1,4,1 do
-		--玩家信息
-		local uid_tem = self.sit[i]
-		local userinfo = {}
-		userinfo.touxian=player[uid_tem].touxian
-		userinfo.score=player[uid_tem].score
-		userinfo.name=player[uid_tem].name
-		userinfo.is_tip = player[uid_tem].is_tip
-		--初始化所有麻将
-		--手牌(不是自己的手牌只发个数)
-		if uid ~= uid_tem then
-			userinfo.hand = #player[uid_tem].hand
+		if players[i] then
+			ret_sitinfo.info.user[i] = {}
+			ret_sitinfo.info.user[i].touxian = players[i].touxian
+			ret_sitinfo.info.user[i].score = players[i].score
+			ret_sitinfo.info.user[i].name = players[i].name
+			ret_sitinfo.info.user[i].uid = players[i].uid
+			ret_sitinfo.info.user[i].sit = players[i].sit
+			ret_sitinfo.info.user[i].is_ready = players[i].is_ready
+			ret_sitinfo.info.user[i].is_tip = players[i].is_tip
+			ret_sitinfo.info.user[i].uid = players[i].uid
+			if uid == players[i].uid then
+			   ret_sitinfo.info.mysit = players[i].sit
+			end
 		else
-			userinfo.hand = player[uid_tem].hand
+			ret_sitinfo.info.user[i] = {}
 		end
-		--门前
-		userinfo.men = player[uid_tem].men
-		--桌面
-		userinfo.disk = player[uid_tem].disk
+	end
+end
+--更新麻将信息
+function game:update_mjinfo(uid)
+	ret_mjinfo.info.user ={}
+	local players = self:getplayers()
+	ret_mjinfo.info.myuid = uid
+	ret_mjinfo.info.banlk_uid = self.banlk_uid
+	for i=1,4,1 do
+		local mjinfo = {}
+		if players[i] then
+			mjinfo.uid = players[i].uid
+			--手牌(不是自己的手牌只发个数)
+			if uid ~= players[i].uid then
+				mjinfo.hand = #players[i].hand
+			else
+				mjinfo.hand = players[i].hand
+			end
+			--门前
+			mjinfo.men = players[i].men
+			--桌面
+			mjinfo.disk = players[i].disk
+			--坐位
+			mjinfo.sit = players[i].sit
+			ret_mjinfo.info.mjinfo[i] = mjinfo
+			if uid == players[i].uid then
+			   ret_mjinfo.info.mysit = players[i].sit
+			end
+		else
+			ret_mjinfo.info.mjinfo[i] = {}
+		end
 		
-		ret_houseinfo.info.user[uid_tem] = userinfo
 	end
 end
 --倒计时(每秒一次)
@@ -240,8 +299,9 @@ function game:sub()
 	end
 	--发送倒计时给要等待的玩家
 	local uids = {}
-	for i=1,#self.sit,1 do
-		local uid = self.sit[i]
+	local players = self:getplayers()
+	for i=1,4,1 do
+		local uid = players[i].uid
 		if (uid~=0 and sev_crt[uid] and 
 			cle_crt[uid] and cle_crt[uid].is_ret == false) then
 			table.insert(uids,uid)
@@ -250,26 +310,24 @@ function game:sub()
 	ret_djshi.info.uids = uids
 	ret_djshi.info.djshi_time = self.gtime
 	mysocket.writebro(fd_list,ret_djshi)
-	skynet.sleep(10)
 end
 --更新在线fd列表
 function game:fdupdate()
+	group_list= datacenter.get("group_list")
+	group = group_list[self.gid]
 	fd_list = {}
 	for k, v in pairs(group.uids) do
 	    local user = pm.get(v)
 		if user then
 		   table.insert(fd_list,user.fd)
-		    if player[user.uid] then
-		  		player[user.uid].fd = user.fd
-		  		player[user.uid].name = user.nick_name
-		  		player[user.uid].touxian = user.touxian
+		    if player_list[user.uid] then
+		  		player_list[user.uid].fd = user.fd
 			end
 		end
 	end
 end
 --游戏更新
 function game:update()	
-	self:fdupdate()
 	if self.state == 100 then
 		if self.jushu >= group.rule.jushu then
     		comman_msg.showbox.info.msg = "游戏结束局数已到"
@@ -278,18 +336,17 @@ function game:update()
 			self.state = 102
 			return
 		end
-		--等待玩家准备 要够4个人才可以
-		for i=1,#self.sit,1 do
-			local uid = self.sit[i]
-			if player[uid] and player[uid].fd<0 then
-				player[uid].is_ready = true
+		local players = self:getplayers()
+		--机器人默认准备
+		for i=1,4,1 do
+			if players[i] and players[i].fd<0 then
+				players[i].is_ready = true
 			end
 		end
 		--等待玩家准备 要够4个人才可以
 		local ready_count = 0
-		for i=1,#self.sit,1 do
-			local uid = self.sit[i]
-			if player[uid] and player[uid].is_ready then
+		for i=1,4,1 do
+			if players[i] and players[i].is_ready then
 				ready_count = ready_count+1
 			end
 		end
@@ -314,8 +371,8 @@ function game:update()
 		--更新房间信息
 		for i=1,#self.sit,1 do
 			local uid = self.sit[i]
-			self:update_houseinfo(uid)
-			mysocket.write(player[uid].fd,ret_houseinfo)
+			self:update_mjinfo(uid)
+			mysocket.write(player_list[uid].fd,ret_mjinfo)
 		end
 		skynet.sleep(400)
 		self.state = 2
@@ -334,10 +391,12 @@ function game:update()
 				self:catchcard(uid,card,gui)	
 			end
 		end
+		ret_cardcount.info.count = #self.card_pile
+		mysocket.writebro(fd_list,ret_cardcount)
 	elseif self.state == 3 then--发出牌
 		local uid = self.crt_uid
 		if uid ~= 0  then
-			local card = player[uid]:getlastdarw()
+			local card = player_list[uid]:getlastdarw()
 			local gui = self.gui
 			self:drawcard(uid,card,gui)
 		end
@@ -373,10 +432,10 @@ function game:init_jx()
 	ret_jx.info.hucard=0
 	ret_jx.info.gan = {}
 	ret_jx.info.user={
-		{uid,name,score,hand,men},
-		{uid,name,score,hand,men},
-		{uid,name,score,hand,men},
-		{uid,name,score,hand,men}
+		{uid,is_ready,name,score,hand,men},
+		{uid,is_ready,name,score,hand,men},
+		{uid,is_ready,name,score,hand,men},
+		{uid,is_ready,name,score,hand,men}
 		}
 end
 --换下一个位做庄
@@ -419,6 +478,7 @@ function game:dealjx()
 	local gui = self.gui
 	local card_score = self:getmjscore(ret_jx.info.hucard)
 	local is_guihu = ret_jx.info.hucard == self.gui
+	local is_zhuang = group.rule.zhuangjia
 	local score = {}
 	local fantext = {}
 	local name = {}
@@ -431,7 +491,7 @@ function game:dealjx()
 	end
 	--胡鬼牌(得到最大分牌)
 	if is_guihu and huid ~= 0 then
-		local tips = player[huid]:getpointtips(gui,gui)
+		local tips = player_list[huid]:getpointtips(gui,gui)
 		self:kddrule(huid)
 		utils.print(tips)
 		card_score = 0
@@ -450,14 +510,22 @@ function game:dealjx()
 				if uid == huid then
 					score[uid] = score[uid]+card_score*2*3
 					fantext[uid] = fantext[uid]..string.format("%s自摸(+%d*2*3)",user[huid].nick_name,card_score)
+					if is_zhuang then
+						score[uid] = score[uid] +20
+						fantext[uid] = fantext[uid]..string.format("带庄(+20*3)")
+					end
 				else
 					score[uid] = score[uid]-card_score*2
 					fantext[uid] = fantext[uid]..string.format("%s自摸(-%d*2)",user[huid].nick_name,card_score)
+					if is_zhuang then
+						score[uid] = score[uid] -20
+						fantext[uid] = fantext[uid]..string.format("带庄(-20)")
+					end
 				end
 			end
 		--不是自摸
 		else
-			local beuid_tip = player[behuid].is_tip
+			local beuid_tip = player_list[behuid].is_tip
 			--点炮听牌平分
 			if beuid_tip then
 				for i=1,#self.sit,1 do
@@ -465,9 +533,17 @@ function game:dealjx()
 					if uid == huid then
 						score[uid] = score[uid]+card_score*3
 						fantext[uid] = fantext[uid]..string.format("%s点炮已听牌(+%d*3)",user[behuid].nick_name,card_score)
+						if is_zhuang then
+							score[uid] = score[uid] +10*3
+							fantext[uid] = fantext[uid]..string.format("带庄(+10*3)")
+						end
 					else
 						score[uid] = score[uid]-card_score
 						fantext[uid] = fantext[uid]..string.format("%s点炮已听牌(-%d)",user[behuid].nick_name,card_score)
+						if is_zhuang then
+							score[uid] = score[uid] -10
+							fantext[uid] = fantext[uid]..string.format("带庄(-10)")
+						end
 					end
 				end
 			else
@@ -476,11 +552,17 @@ function game:dealjx()
 				score[behuid] = score[behuid]-card_score*3
 				fantext[huid] = fantext[huid]..string.format("%s点炮未听牌(+%d*3)",user[behuid].nick_name,card_score)
 				fantext[behuid] = fantext[behuid]..string.format("%s点炮未听牌(-%d*3)",user[behuid].nick_name,card_score)
+				if is_zhuang then
+					score[huid] = score[huid] +20
+					fantext[huid] = fantext[huid]..string.format("带庄(+20)")
+					score[behuid] = score[behuid] -20
+					fantext[behuid] = fantext[behuid]..string.format("带庄(-20)")
+				end
 			end
 		end
 		--特殊牌型 7小对 十三幺 一条龙
 		utils.print(cards)
-		local htype = player[huid]:gethutype(gui)
+		local htype = player_list[huid]:gethutype(gui)
 		if htype ~= 0 then
 			local beishu = {2,2,2,4}
 			local huname = {"7小对","十三幺","一条龙","豪华7小对"}
@@ -525,7 +607,7 @@ function game:dealjx()
 					end
 				else
 					--明干
-					if player[beuid].is_tip then
+					if player_list[beuid].is_tip then
 						for j=1,#self.sit,1 do
 							local uid = self.sit[j]
 							if uid == ganuid then
@@ -559,8 +641,8 @@ function game:dealjx()
 	--更新玩家总分
 	for i=1,#self.sit,1 do
 		local uid = self.sit[i]
-		player[uid].score = player[uid].score+score[uid]
-		player[uid].is_ready = false
+		player_list[uid].score = player_list[uid].score+score[uid]
+		player_list[uid].is_ready = false
 	end
 
 	ret_jx.info.hutype=1
@@ -569,17 +651,24 @@ function game:dealjx()
 		local uid = self.sit[i]
 		local user = {uid,touxian,name,score,zscore,hand,men,fantext}
 		user.uid = uid
-		user.name = player[uid].name
-		user.hand = player[uid].hand
-		user.men = player[uid].men
+		user.name = player_list[uid].name
+		user.hand = player_list[uid].hand
+		user.men = player_list[uid].men
 		user.score = score[uid]
-		user.zscore = player[uid].score
+		user.zscore = player_list[uid].score
 		user.fantext = fantext[uid]
-		user.touxian = player[uid].touxian
+		user.touxian = player_list[uid].touxian
+		user.is_ready = player_list[uid].is_ready
+		user.sit =  player_list[uid].sit
 		ret_jx.info.user[i] = user
 	end
-
-
+end
+--更新结算
+function game:update_jx()
+	for i=1,#self.sit,1 do
+		local uid = self.sit[i]
+		ret_jx.info.user[i].is_ready = player_list[uid].is_ready
+	end
 end
 --效验是否成功
 function game:checkcrt(crt)
@@ -635,7 +724,7 @@ function game:checkcrt(crt)
 		elseif crt.crt_type==7  then
 			if sev_crt[uid].drawcard then
 				local card = crt.card
-				local card_count = player[uid]:getcount(card,player[uid].hand)
+				local card_count = player_list[uid]:getcount(card,player_list[uid].hand)
 				ret = card_count>0
 			else
 				ret = false
@@ -657,7 +746,7 @@ function game:dealcrt(crt)
 	if crt_type == 1 then
 		local uid = crt.uid
 		local beuid = self.crt_uid
-		player[uid]:eat(crt.cards,player[beuid])
+		player_list[uid]:eat(crt.cards,player_list[beuid])
 		ret_eat.info.cards = crt.cards
 		ret_eat.info.uid = uid
 		ret_eat.info.beuid = beuid
@@ -668,7 +757,7 @@ function game:dealcrt(crt)
 	elseif crt_type == 2 then
 		local uid = crt.uid
 		local beuid = self.crt_uid
-		player[uid]:pen(crt.card,player[beuid])
+		player_list[uid]:pen(crt.card,player_list[beuid])
 		ret_pen.info.card = crt.card
 		ret_pen.info.uid = uid
 		ret_pen.info.beuid = beuid
@@ -679,7 +768,7 @@ function game:dealcrt(crt)
 	elseif crt_type == 3 then
 		local uid = crt.uid
 		local beuid = self.crt_uid
-		player[uid]:mgan(crt.card,player[beuid])
+		player_list[uid]:mgan(crt.card,player_list[beuid])
 		ret_mgan.info.card = crt.card
 		ret_mgan.info.uid = uid
 		ret_mgan.info.beuid = beuid
@@ -690,7 +779,7 @@ function game:dealcrt(crt)
 		table.insert(ret_jx.info.gan,{card=crt.card,uid=uid,beuid=beuid})
 	elseif crt_type == 4 then
 		local uid = crt.uid
-		player[uid]:agan(crt.card)
+		player_list[uid]:agan(crt.card)
 		ret_agan.info.card = crt.card
 		ret_agan.info.uid = uid
 		mysocket.writebro(fd_list,ret_agan)
@@ -698,12 +787,12 @@ function game:dealcrt(crt)
 		table.insert(ret_jx.info.gan,{card=crt.card,uid=uid,beuid=uid})
 	elseif crt_type == 5 then
 		local uid = crt.uid
-		player[uid].is_tip = true
+		player_list[uid].is_tip = true
 		ret_tip.info.card = crt.card
 		ret_tip.info.index = crt.index
 		ret_tip.info.uid = uid
 		mysocket.writebro(fd_list,ret_tip)
-		player[uid]:draw(crt.card)
+		player_list[uid]:draw(crt.card)
 	elseif crt_type == 6 then
 		local uid = crt.uid
 		local is_zimo = uid == self.crt_uid
@@ -718,7 +807,7 @@ function game:dealcrt(crt)
 		if is_zimo==false then
 			--添加到手牌中
 			print("adcard "..crt.card)
-			player[uid]:addcards({[1] = crt.card},1,player[uid].hand) 
+			player_list[uid]:addcards({[1] = crt.card},1,player_list[uid].hand) 
 		end
 		mysocket.writebro(fd_list,ret_hu)
 	elseif crt_type == 7 then
@@ -726,7 +815,7 @@ function game:dealcrt(crt)
 		ret_drawcard.info.index = crt.index
 		ret_drawcard.info.uid = crt.uid
 		mysocket.writebro(fd_list,ret_drawcard)
-		player[crt.uid]:draw(crt.card)
+		player_list[crt.uid]:draw(crt.card)
 	elseif crt_type == 8 then
 	end
 	crt.is_ret = false
@@ -735,7 +824,7 @@ end
 --听牌后不可以做的事
 function game:afttipsnodo(uid,gui)
 	--听牌后就不可以再听了,听牌后不能出,听牌后不可以碰吃 只能系统出牌
-	if player[uid].is_tip and sev_crt[uid] then
+	if player_list[uid].is_tip and sev_crt[uid] then
 		sev_crt[uid].tips = nil
 		sev_crt[uid].drawcard = nil
 		sev_crt[uid].pen = nil
@@ -743,7 +832,7 @@ function game:afttipsnodo(uid,gui)
 		--听牌后如要干牌得要还能听才可以
 		if sev_crt[uid].agan or sev_crt[uid].mgan then
 			local card =  sev_crt[uid].agan and sev_crt[uid].agan[1] or sev_crt[uid].mgan[1]
-			local tips = player[uid]:getaftgantips(card,gui)
+			local tips = player_list[uid]:getaftgantips(card,gui)
 			if tips ==nil then
 				sev_crt[uid].agan = nil
 				sev_crt[uid].mgan = nil
@@ -780,7 +869,7 @@ function game:kddrule(uid)
 				sev_crt[uid].hu = nil
 			end
 			--没听牌不可以胡
-			if player[uid].is_tip == false then
+			if player_list[uid].is_tip == false then
 				sev_crt[uid].hu = nil
 			end
 		end
@@ -825,10 +914,10 @@ end
 --抓牌逻辑
 function game:catchcard(uid,card,gui)
 	print("catchcard "..uid)
-	local fd = player[uid].fd
+	local fd = player_list[uid].fd
 	--得到此牌本玩家的操作信息
-	sev_crt[uid] = player[uid]:getcathcrt(card,gui)
-	--skynet.call(db, "lua", "dump",player[uid].hand)
+	sev_crt[uid] = player_list[uid]:getcathcrt(card,gui)
+	--skynet.call(db, "lua", "dump",player_list[uid].hand)
 	--听牌后不可以做的事
 	self:afttipsnodo(uid,gui)
 	--扣点点规制过虑
@@ -846,13 +935,13 @@ function game:catchcard(uid,card,gui)
 	--等待玩家回馈
 	self.gtime = self.max_djshi
 	--听牌后如果不是胡系统自己动出牌
-	if player[uid].is_tip and  (sev_crt[uid]==nil or 
+	if player_list[uid].is_tip and  (sev_crt[uid]==nil or 
 		(sev_crt[uid].hu==nil and sev_crt[uid].agan==nil))then
-		self.gtime = 0
+		self.gtime = 1
 	end
 
 	if fd < 0 then 
-		self.gtime = 1
+		self.gtime = 2
 	end
 	for k, v in pairs(cle_crt) do
 	    v.is_ret = false
@@ -890,7 +979,7 @@ function game:catchcard(uid,card,gui)
 		ret_drawcard.info.index = 0
 		ret_drawcard.info.uid = uid
 		mysocket.writebro(fd_list,ret_drawcard)
-		player[uid]:draw(card)
+		player_list[uid]:draw(card)
 		self.state = 3
 	end
 end
@@ -909,8 +998,8 @@ function game:drawcard(uid,card,gui)
 			local nextsit = {2,3,4,1}
 			local is_eat = nextsit[csit] == msit--吃的话一定是要当前是上家
 			--如果是机器人就不理了
-			sev_crt[uid_tem] = player[uid_tem]:getdrawcrt(card,gui,is_eat)
-			if player[uid_tem].fd < 0 then
+			sev_crt[uid_tem] = player_list[uid_tem]:getdrawcrt(card,gui,is_eat)
+			if player_list[uid_tem].fd < 0 then
 				sev_crt[uid_tem] = nil
 			end
 			--听牌后不可以做的事
@@ -919,7 +1008,7 @@ function game:drawcard(uid,card,gui)
 			self:kddrule(uid_tem)
 			--发送操作信息给玩家
 			ret_crtbox.info = sev_crt[uid_tem]
-			mysocket.write(player[uid_tem].fd,ret_crtbox)
+			mysocket.write(player_list[uid_tem].fd,ret_crtbox)
 		end
 	end
 	
@@ -989,12 +1078,12 @@ end
 function game:afteatpen(uid,gui)
 	print("afteatpen")
 	--得到此牌本玩家的操作信息
-	sev_crt[uid] = player[uid]:getafteatpen(gui)
+	sev_crt[uid] = player_list[uid]:getafteatpen(gui)
 	--扣点点规制过虑
 	self:kddrule(uid)
 	--发送操作信息给玩家
 	ret_crtbox.info = sev_crt[uid]
-	mysocket.write(player[uid].fd,ret_crtbox)
+	mysocket.write(player_list[uid].fd,ret_crtbox)
 	--等待玩家回馈
 	self.gtime = self.max_djshi
 	for k, v in pairs(cle_crt) do
@@ -1024,15 +1113,15 @@ function game:afteatpen(uid,gui)
 	--超时直接出牌
 	if is_moren then
 		--吃碰后默认出牌需要排序
-		table.sort(player[uid].hand,function(a,b)
+		table.sort(player_list[uid].hand,function(a,b)
 			return a<b
 		end)
-		local card = player[uid].hand[#player[uid].hand]
+		local card = player_list[uid].hand[#player_list[uid].hand]
 		ret_drawcard.info.card = card
 		ret_drawcard.info.index = 0
 		ret_drawcard.info.uid = uid
 		mysocket.writebro(fd_list,ret_drawcard)
-		player[uid]:draw(card)
+		player_list[uid]:draw(card)
 		self.state = 3
 	end
 end
@@ -1049,6 +1138,7 @@ function CMD.eat(msg)
 			cle_crt[user.uid].fd = msg.fd
 			cle_crt[user.uid].is_ret = true
 		end
+		mysocket.write(msg.fd,ret_crtreced)
 	end
 end
 --玩家碰牌{pen=0}
@@ -1062,6 +1152,7 @@ function CMD.pen(msg)
 			cle_crt[user.uid].fd = msg.fd
 			cle_crt[user.uid].is_ret = true
 		end
+		mysocket.write(msg.fd,ret_crtreced)
 	end
 end
 --玩家明干{mgan=0}
@@ -1075,6 +1166,7 @@ function CMD.mgan(msg)
 			cle_crt[user.uid].fd = msg.fd
 			cle_crt[user.uid].is_ret = true
 		end
+		mysocket.write(msg.fd,ret_crtreced)
 	end
 end
 
@@ -1089,6 +1181,7 @@ function CMD.agan(msg)
 			cle_crt[user.uid].fd = msg.fd
 			cle_crt[user.uid].is_ret = true
 		end
+		mysocket.write(msg.fd,ret_crtreced)
 	end
 end
 
@@ -1103,6 +1196,7 @@ function CMD.tip(msg)
 			cle_crt[user.uid].fd = msg.fd
 			cle_crt[user.uid].is_ret = true
 		end
+		mysocket.write(msg.fd,ret_crtreced)
 	end
 end
 --玩家胡牌{hu = true}
@@ -1116,6 +1210,7 @@ function CMD.hu(msg)
 			cle_crt[user.uid].fd = msg.fd
 			cle_crt[user.uid].is_ret = true
 		end
+		mysocket.write(msg.fd,ret_crtreced)
 	end
 end
 --取消
@@ -1129,6 +1224,7 @@ function CMD.pass(msg)
 			cle_crt[user.uid].fd = msg.fd
 			cle_crt[user.uid].is_ret = true
 		end
+		mysocket.write(msg.fd,ret_crtreced)
 	end
 end
 --玩家正常出牌{drawcard = 0}
@@ -1150,7 +1246,7 @@ function CMD.exit_group(msg)
 	if user then
 		local sit = game:getsit(user.uid)
 		game.sit[sit] = 0
-		player[user.uid] = nil
+		player_list[user.uid] = nil
 	end
 end
 --游戏状态
@@ -1160,60 +1256,55 @@ end
 --准备游戏
 function CMD.ready(msg)
 	local user = pm.getbyfd(msg.fd)
-	if user and player[user.uid] then
-		player[user.uid].is_ready = true
-		ret_ready.info.uid = user.uid
+	if user then
+		player_list[user.uid].is_ready = true
+		ret_ready.info.sit = player_list[user.uid].sit
 		mysocket.writebro(fd_list,ret_ready)
 	end
 end
 --进入房间
 function CMD.join(msg)
+	game:fdupdate()
+	utils.print(fd_list)
 	local user = pm.getbyfd(msg.fd)
 	if user then
 		local sit = game:getfreesit()
-		game:player_sit(0,sit,0)
+		utils.print(game.sit)
 		if sit ~= 0 then
-			--这可以更新头像用户信息
-			game:player_sit(user.uid,sit,msg.fd)
-			skynet.fork(function()
-				skynet.sleep(100)
-				ret_rule.info.rule = group.rule
-				mysocket.write(msg.fd,ret_rule)
-				for i=1,4,1 do
-					local uid = game.sit[i]
-					if uid ~= 0  then
-						ret_join.info.uid = uid
-						ret_join.info.name = player[uid].name
-						ret_join.info.touxian = player[uid].touxian
-						ret_join.info.sit = game.sit
-						ret_join.info.jushu = game.jushu
-						ret_join.info.groupid = group.gid
-						mysocket.writebro(fd_list,ret_join)
+			game:player_create(user,sit)
+			local players = game:getplayers()
+				for i=1,4,1 do 
+					if players[i] then
+						game:update_sitinfo(players[i].uid)
+						mysocket.write(players[i].fd,ret_sitinfo)
 					end
 				end
-			end)
+			return true
 		end
 	end
+	return false
 end
 --恢复游戏
 function CMD.resgame(msg)
+	game:fdupdate()
 	local user = pm.getbyfd(msg.fd)
-	local sit_count = 0
-	if user and player[user.uid] then
-		skynet.fork(function()
-			skynet.sleep(100)
-			player[user.uid].is_ready = true
-			game:update_houseinfo(user.uid)
-			ret_ready.info.uid = user.uid
-			mysocket.writebro(fd_list,ret_ready)
-			ret_rule.info.rule = group.rule
-			mysocket.write(msg.fd,ret_rule)
-			mysocket.write(msg.fd,ret_houseinfo)
-			if self.state == 102 then
-	    		comman_msg.showbox.info.msg = "游戏结束局数已到"
-	    		mysocket.write(msg.fd, comman_msg.showbox)
-    		end
-		end)
+	if user and player_list[user.uid] then
+		game:update_sitinfo(user.uid)
+		game:update_mjinfo(user.uid)
+		mysocket.write(msg.fd,ret_sitinfo)	
+		--游戏等待状态
+		if game.state >= 100 then
+			if game.jushu > 0  then
+				game:update_jx()
+				mysocket.write(msg.fd,ret_mjinfo)
+				mysocket.write(msg.fd,ret_jx)
+			end
+		else
+		--游戏开始状态
+			mysocket.write(msg.fd,ret_mjinfo)
+		end
+			
+		
 		
 	end
 end
@@ -1221,6 +1312,7 @@ end
 function CMD.disconnect()
   -- todo: do something before exit
   if game.jushu == 0 then
+  		--房费退还
   		local fanfei = {1,2}
 	    local needfanfei = fanfei[group.rule.fanfei]
 	    local user = pm.get(group.fzuid)
