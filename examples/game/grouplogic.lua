@@ -16,9 +16,9 @@ local ret_join = {mode="hall",cmd = "create",info ={gid = 1,game_id=1}}
 --退出房间
 local ret_exit = {mode="hall",cmd = "create",info ={gid=1}}
 --提出解散房间
-local ret_tidel = {mode="any",cmd = "tidel",info ={name=""}}
+local ret_tidel = {mode="any",cmd = "tidel",info ={text="",user={}}}
 --是否同意解散房间
-local ret_agdel = {mode="any",cmd = "agdel",info ={name="",agree=false}}
+local ret_agdel = {mode="any",cmd = "agdel",info ={uid="",name="",agree=false,isover=false}}
 
 function echo_user(user,uid)
 	if user[tostring(uid)] then
@@ -46,6 +46,18 @@ function get_groupfds(group)
 	end
 	return fd_list
 end
+
+function get_groupusers(group)
+    local user_list = {}
+    for k, v in pairs(group.uids) do
+	    local user = pm.get(v)
+		if user then
+		   table.insert(user_list,user)
+		end
+	end
+	return user_list
+end
+
 --更新到共享数据中
 function update_group()
 	datacenter.set("group_list",group_list)
@@ -73,7 +85,7 @@ end
 local g_robid = 100000
 function add_robit(group,count)
    for i=1,count,1 do
-	    local rouid = (g_robid)
+	    local rouid = -(g_robid)
 	    g_robid = g_robid+1
 	    --添加机器人 
 	    pm.add({uid = rouid,nick_name = "123",touxian = "http://thirdwx.qlogo.cn/mmopen/vi_32/3EB7dFdNRKmjHmkRpGvjqZh2ia0Oj69tticicvb3T2lsFDricb4Sc7YPHhPlJvolJ8uv5GaibSk65q1g4IDz5R5hS1w/132"},rouid)
@@ -102,18 +114,28 @@ function CMD.tidel(msg)
 	    if group then 
 	    	local uid = user.uid
 	    	local gid = group.gid
+	    	local users = get_groupusers(group)
 	    	group_list[gid].agdel = {}
-	    	for k, v in pairs(group.uids) do
-	    		group_list[gid].agdel[v] = false
+	    	ret_tidel.info.text = user.nick_name
+	    	for i=1,#users,1 do
+	    		ret_tidel.info.user[i] = {state=0,name,uid}
+	    		ret_tidel.info.user[i].uid = users[i].uid
+	    		ret_tidel.info.user[i].name = users[i].nick_name
+	    		ret_tidel.info.user[i].touxian = users[i].touxian
+	    		ret_tidel.info.user[i].state = 1
+	    		group_list[gid].agdel[users[i].uid] = 0--0等待 1同意 2 不同意
+	    		if tonumber(users[i].uid) < 0 then
+	    			group_list[gid].agdel[users[i].uid] = 1
+	    		end
 	    	end
-	    	group_list[gid].agdel[uid] = true
-	    	ret_tidel.info.name = user.nick_name
 	    	local fd_list = get_groupfds(group)
-	    	mysocket.writebel(fd_list,user.fd,ret_tidel)
+	    	mysocket.writebro(fd_list,ret_tidel)
 	    else
 	    	comman_msg.showbox.info.msg = "已不在房间中"
     		mysocket.write(user.fd, comman_msg.showbox)
 	    end
+	    --挂起游戏
+	    skynet.call(group.ser, "lua", "game_hang",true)
 	end
 end
 --是否同意解散房间
@@ -124,26 +146,45 @@ function CMD.agdel(msg)
 	    if group then 
 	    	local uid = user.uid
 	    	local gid = group.gid
-	    	local is_del = true
-	    	group_list[gid].agdel[uid] = msg.info.agree
+	    	local agree_count = 0
+	    	local disagree_count = 0
+	    	if msg.info.agree then
+	    		group_list[gid].agdel[uid] = 1
+	   	 	else
+	   	 		group_list[gid].agdel[uid] = 2
+	   		end
 	    	for k, v in pairs(group.uids) do
-	    		if group_list[gid].agdel[v] == false then
-	    			is_del = false
+	    		if group_list[gid].agdel[v]==1 then
+	    			agree_count = agree_count+1
+	    		elseif group_list[gid].agdel[v]==2 then
+	    			disagree_count = disagree_count+1
 	    		end
 	    	end
+	    	
 	    	local fd_list = get_groupfds(group)
-	    	if msg.info.agree == false then
-	    		comman_msg.showbox.info.msg = user.nick_name.." 拒绝解散"
-    			mysocket.writebel(fd_list,user.fd,comman_msg.showbox)
-	    	end
-	    	--解散房间
-	    	if is_del then
+	    	if disagree_count>=(#fd_list)*0.5 then
+	    		--不解散房间
+	    		comman_msg.showbox.info.msg = "玩家大多数不同意解散!"
+    			mysocket.writebro(fd_list,comman_msg.showbox)
+	    	elseif agree_count>=(#fd_list)*0.5 then
+	    		--解散房间
 	    		print("remove group and stop ser")
 	    		comman_msg.showbox.info.msg = "游戏已解散请退出"
     			mysocket.writebro(fd_list,comman_msg.showbox)
 		    	skynet.send(group.ser, "lua", "disconnect")
 		    	group_list[group.gid] = nil
 	    	end
+	    	local user_count = (#fd_list)
+	    	print("user_count"..user_count.."disagree_count"..disagree_count.."agree_count"..agree_count)
+	    	ret_agdel.info.uid = uid
+	    	ret_agdel.info.name = user.nick_name
+	    	ret_agdel.info.agree = msg.info.agree
+	    	ret_agdel.info.isover = (disagree_count>=user_count*0.5) or (agree_count>=user_count*0.5)
+	    	mysocket.writebro(fd_list,ret_agdel)
+	    	--役票结束 不挂起
+	    	if ret_agdel.info.isover then
+	    		skynet.call(group.ser, "lua", "game_hang",false)
+	   		end
 	    end
 	end
 end
@@ -251,7 +292,7 @@ function CMD.create_group(msg)
 		        	group_list[group.gid] = group
 		        	update_group()
 		        	skynet.call(ser, "lua", "start",group.gid)
-		        	add_robit(group,2)
+		        	add_robit(group,1)
 		        	--加入到此房间中
 		        	CMD.join_group({fd = msg.fd,uid = user.uid,gid=group.gid})
 		        	--添加机器人

@@ -68,7 +68,7 @@ user={
 	}}}
 
 
-local game = {gtime = 0,state = 100,gid=0,jushu = 0,max_djshi=10,gui=5,banlk_uid = 0,crt_uid = 1,sit = {0,0,0,0},card_pile = {}}
+local game = {gtime = 0,state = 100,is_hang=false,gid=0,jushu = 0,max_djshi=10,gui=5,banlk_uid = 0,crt_uid = 1,sit = {0,0,0,0},card_pile = {}}
 --4个玩家
 local player_list = {{},{},{},{}}
 --玩家对当前出牌操作信息
@@ -328,6 +328,9 @@ function game:fdupdate()
 end
 --游戏更新
 function game:update()	
+	if self.is_hang then
+		return
+	end
 	if self.state == 100 then
 		if self.jushu >= group.rule.jushu then
     		comman_msg.showbox.info.msg = "游戏结束局数已到"
@@ -511,7 +514,7 @@ function game:dealjx()
 					score[uid] = score[uid]+card_score*2*3
 					fantext[uid] = fantext[uid]..string.format("%s自摸(+%d*2*3)",user[huid].nick_name,card_score)
 					if is_zhuang then
-						score[uid] = score[uid] +20
+						score[uid] = score[uid] +20*3
 						fantext[uid] = fantext[uid]..string.format("带庄(+20*3)")
 					end
 				else
@@ -1042,7 +1045,14 @@ function game:drawcard(uid,card,gui)
 	end
 
 	table.sort(clecrt_tem,function(a,b)
-		return a.crt_type > b.crt_type
+		local qu = {a.crt_type,b.crt_type}
+		if qu[1] == 8 then
+			qu[1] = 0
+		end
+		if qu[2] == 8 then
+			qu[2] = 0
+		end
+		return qu[1] > qu[2]
 	end)
 	
 
@@ -1253,6 +1263,10 @@ end
 function CMD.game_state(msg)
 	return game.state
 end
+--是否挂起游戏
+function CMD.game_hang(is_hang)
+	game.is_hang = is_hang
+end
 --准备游戏
 function CMD.ready(msg)
 	local user = pm.getbyfd(msg.fd)
@@ -1303,9 +1317,6 @@ function CMD.resgame(msg)
 		--游戏开始状态
 			mysocket.write(msg.fd,ret_mjinfo)
 		end
-			
-		
-		
 	end
 end
 
