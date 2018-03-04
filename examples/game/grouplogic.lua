@@ -14,7 +14,7 @@ local ret_create = {mode="hall",cmd = "create",info ={game_id=1}}
 --加入房间 进入游戏
 local ret_join = {mode="hall",cmd = "create",info ={gid = 1,game_id=1}}
 --退出房间
-local ret_exit = {mode="hall",cmd = "create",info ={gid=1}}
+local ret_exit = {mode="any",cmd = "exit",info ={gid=1}}
 --提出解散房间
 local ret_tidel = {mode="any",cmd = "tidel",info ={text="",user={}}}
 --是否同意解散房间
@@ -88,7 +88,7 @@ function add_robit(group,count)
 	    local rouid = -(g_robid)
 	    g_robid = g_robid+1
 	    --添加机器人 
-	    pm.add({uid = rouid,nick_name = "123",touxian = "http://thirdwx.qlogo.cn/mmopen/vi_32/3EB7dFdNRKmjHmkRpGvjqZh2ia0Oj69tticicvb3T2lsFDricb4Sc7YPHhPlJvolJ8uv5GaibSk65q1g4IDz5R5hS1w/132"},rouid)
+	    pm.add({uid = rouid,nick_name = "rob"..rouid,touxian = "http://thirdwx.qlogo.cn/mmopen/vi_32/3EB7dFdNRKmjHmkRpGvjqZh2ia0Oj69tticicvb3T2lsFDricb4Sc7YPHhPlJvolJ8uv5GaibSk65q1g4IDz5R5hS1w/132"},rouid)
 	    --机器人加入
 	    CMD.join_group({fd = rouid,uid = rouid,gid=group.gid})
 	    skynet.send(group.ser, "lua", "ready",{fd = rouid})
@@ -117,6 +117,8 @@ function CMD.tidel(msg)
 	    	local users = get_groupusers(group)
 	    	group_list[gid].agdel = {}
 	    	ret_tidel.info.text = user.nick_name
+	    	print("#users"..#users)
+	    	ret_tidel.info.user = {}
 	    	for i=1,#users,1 do
 	    		ret_tidel.info.user[i] = {state=0,name,uid}
 	    		ret_tidel.info.user[i].uid = users[i].uid
@@ -130,12 +132,12 @@ function CMD.tidel(msg)
 	    	end
 	    	local fd_list = get_groupfds(group)
 	    	mysocket.writebro(fd_list,ret_tidel)
+	    	--挂起游戏
+	   		skynet.call(group.ser, "lua", "game_hang",true)
 	    else
 	    	comman_msg.showbox.info.msg = "已不在房间中"
     		mysocket.write(user.fd, comman_msg.showbox)
 	    end
-	    --挂起游戏
-	    skynet.call(group.ser, "lua", "game_hang",true)
 	end
 end
 --是否同意解散房间
@@ -162,19 +164,7 @@ function CMD.agdel(msg)
 	    	end
 	    	
 	    	local fd_list = get_groupfds(group)
-	    	if disagree_count>=(#fd_list)*0.5 then
-	    		--不解散房间
-	    		comman_msg.showbox.info.msg = "玩家大多数不同意解散!"
-    			mysocket.writebro(fd_list,comman_msg.showbox)
-	    	elseif agree_count>=(#fd_list)*0.5 then
-	    		--解散房间
-	    		print("remove group and stop ser")
-	    		comman_msg.showbox.info.msg = "游戏已解散请退出"
-    			mysocket.writebro(fd_list,comman_msg.showbox)
-		    	skynet.send(group.ser, "lua", "disconnect")
-		    	group_list[group.gid] = nil
-	    	end
-	    	local user_count = (#fd_list)
+			local user_count = (#fd_list)
 	    	print("user_count"..user_count.."disagree_count"..disagree_count.."agree_count"..agree_count)
 	    	ret_agdel.info.uid = uid
 	    	ret_agdel.info.name = user.nick_name
@@ -185,6 +175,20 @@ function CMD.agdel(msg)
 	    	if ret_agdel.info.isover then
 	    		skynet.call(group.ser, "lua", "game_hang",false)
 	   		end
+
+	    	if disagree_count>=(#fd_list)*0.5 then
+	    		--不解散房间
+	    		comman_msg.showbox.info.msg = "玩家大多数不同意解散!"
+    			mysocket.writebro(fd_list,comman_msg.showbox)
+	    	elseif agree_count>=(#fd_list)*0.5 then
+	    		--解散房间
+	    		print("remove group and stop ser")
+    			mysocket.writebro(fd_list, {mode="hall",cmd="showbox",info={msg = "游戏已解散"}})
+    			mysocket.writebro(fd_list,ret_exit)--退出房间
+		    	skynet.send(group.ser, "lua", "disconnect")
+		    	group_list[group.gid] = nil
+	    	end
+	    	
 	    end
 	end
 end
@@ -285,14 +289,14 @@ function CMD.create_group(msg)
 	        		user.card = user.card-needfanfei
 	        		pm.set(user)
 	        		local ser = skynet.newservice("kddmj")
-		        	group = {uids = {},fzuid = 0,agdel={},ser = ser,game_id = 1,maxuser = 5,rule={}}
+		        	group = {uids = {},fzuid = 0,agdel={},ser = ser,game_id = 1,maxuser = 4,rule={}}
 		        	group.fzuid = user.uid
 		        	group.rule = msg.rule
 		        	group.gid = math.random(100000,888888)+user.uid
 		        	group_list[group.gid] = group
 		        	update_group()
 		        	skynet.call(ser, "lua", "start",group.gid)
-		        	add_robit(group,3)
+		        	add_robit(group,2)
 		        	--加入到此房间中
 		        	CMD.join_group({fd = msg.fd,uid = user.uid,gid=group.gid})
 		        	--添加机器人

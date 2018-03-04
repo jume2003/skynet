@@ -365,12 +365,16 @@ function game:update()
 		--游戏结束局数已到
 
 	elseif self.state == 1 then
+		--剩余牌数
+		ret_cardcount.info.count = #self.card_pile
+		mysocket.writebro(fd_list,ret_cardcount)
+		--鬼牌
+		ret_gui.info.gui = self.gui
+		mysocket.writebro(fd_list,ret_gui)
 		--抓位 s
 		ret_touzi.info.touzi1 = math.random(1,6)
 		ret_touzi.info.touzi2 = math.random(1,6)
 		mysocket.writebro(fd_list,ret_touzi)
-		ret_gui.info.gui = self.gui
-		mysocket.writebro(fd_list,ret_gui)
 		skynet.sleep(300)
 		--更新房间信息
 		for i=1,#self.sit,1 do
