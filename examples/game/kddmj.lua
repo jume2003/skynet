@@ -151,13 +151,13 @@ function game:pile_init()
 	end
 	local mj_count = is_fen and 136 or (136-28)
 
-	for i=1,136,1 do
+	for i=1,mj_count,1 do
 		local max_mj  = is_fen and 34 or 27
 		table.insert(self.card_pile, ((i-1)%max_mj)+1)
 	end
 
 	--混乱麻将
-	for i=1,mj_count,1 do
+	for i=1,mj_count+300,1 do
 		local index1 = math.random(1,mj_count)
 		local index2 = math.random(1,mj_count)
 		local tem = self.card_pile[index1]
@@ -199,7 +199,7 @@ function game:player_init(palyer)
 		table.remove(self.card_pile,#self.card_pile)
 		cards[i] = card
 	end
-	cards = {1,1,1,1,2,2,2,2,3,3,3,3,self.gui}
+	cards = {1,1,1,1,2,2,2,2,3,3,3,3,4}
 	palyer:init(cards,uid)
 	
 	palyer.is_tip = false
@@ -265,6 +265,7 @@ function game:update_mjinfo(uid)
 	local players = self:getplayers()
 	ret_mjinfo.info.myuid = uid
 	ret_mjinfo.info.banlk_uid = self.banlk_uid
+	ret_mjinfo.info.jushu = self.jushu
 	for i=1,4,1 do
 		local mjinfo = {}
 		if players[i] then

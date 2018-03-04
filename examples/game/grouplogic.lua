@@ -292,7 +292,7 @@ function CMD.create_group(msg)
 		        	group_list[group.gid] = group
 		        	update_group()
 		        	skynet.call(ser, "lua", "start",group.gid)
-		        	add_robit(group,1)
+		        	add_robit(group,3)
 		        	--加入到此房间中
 		        	CMD.join_group({fd = msg.fd,uid = user.uid,gid=group.gid})
 		        	--添加机器人
