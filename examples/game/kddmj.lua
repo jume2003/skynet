@@ -91,7 +91,7 @@ function CMD.start(gid)
 			if game.state<100 then
 				game:sub()
 			end
-			skynet.sleep(50)
+			skynet.sleep(100)
 		end
 	end)
 end
