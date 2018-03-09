@@ -1,4 +1,4 @@
-CREATE DATABASE  IF NOT EXISTS `skynet` /*!40100 DEFAULT CHARACTER SET latin1 */;
+CREATE DATABASE  IF NOT EXISTS `skynet` /*!40100 DEFAULT CHARACTER SET utf8 */;
 USE `skynet`;
 -- MySQL dump 10.13  Distrib 5.5.58, for debian-linux-gnu (x86_64)
 --
@@ -37,7 +37,7 @@ CREATE TABLE `user` (
   `card` int(11) DEFAULT '0',
   `touxian` varchar(512) DEFAULT '1',
   PRIMARY KEY (`uid`)
-) ENGINE=InnoDB AUTO_INCREMENT=44 DEFAULT CHARSET=latin1;
+) ENGINE=InnoDB AUTO_INCREMENT=44 DEFAULT CHARSET=utf8;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
