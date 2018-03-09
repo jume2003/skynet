@@ -1,0 +1,8 @@
+在[client]标签下，增加客户端的字符编码
+[client]
+default-character-set=utf8
+
+在[mysqld]标签下，增加服务器端的字符编码
+[mysqld]
+character-set-server=utf8
+collation-server=utf8_general_ci
